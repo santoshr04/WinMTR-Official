@@ -22,7 +22,7 @@
 	}
 
 #ifdef _DEBUG
-#define new DEBUG_NEW
+#define new DEBUG_NE
 #undef THIS_FILE
 static	 char THIS_FILE[] = __FILE__;
 #endif
@@ -361,30 +361,42 @@ void WinMTRDialog::OnCustomDrawList(NMHDR* pNMHDR, LRESULT* pResult)
 			}
 			if (maxLatency < 1) maxLatency = 1;
 
-			pDC->FillSolidRect(rc, RGB(245, 245, 245));
+			// Format text first - needed for width calculation
+			char buf[32];
+			sprintf(buf, "%d ms", avg);
+			CSize textSize = pDC->GetTextExtent(buf, (int)strlen(buf));
 
-			int barHeight = rc.Height() - 6;
-			int barTop = rc.top + 3;
-			int barLeft = rc.left + 4;
-			int barMaxWidth = rc.Width() - 12;
+			pDC->FillSolidRect(rc, RGB(248, 248, 248));
+
+			int margin = 3;
+			int textWidth = textSize.cx + 4;
+			int barHeight = max(rc.Height() - 8, 6);
+			int barTop = rc.top + (rc.Height() - barHeight) / 2;
+			int barLeft = rc.left + margin;
+			int barMaxWidth = rc.Width() - margin * 2 - textWidth - 4;
+			if (barMaxWidth < 10) barMaxWidth = 10;
+			
 			int barWidth = (avg * barMaxWidth) / maxLatency;
 			if (barWidth < 2 && avg > 0) barWidth = 2;
+			if (barWidth > barMaxWidth) barWidth = barMaxWidth;
 
+			// Draw bar
 			CRect barRect(barLeft, barTop, barLeft + barWidth, barTop + barHeight);
 			COLORREF barColor = GetLatencyColor(avg);
 			int r = GetRValue(barColor);
-			int g = GetGValue(barColor) - 50;
-			int b = GetBValue(barColor) - 50;
+			int g = GetGValue(barColor) - 60;
+			int b = GetBValue(barColor) - 60;
 			if (g < 0) g = 0;
 			if (b < 0) b = 0;
 			pDC->FillSolidRect(barRect, RGB(r, g, b));
-			pDC->Draw3dRect(barRect, RGB(180,180,180), RGB(180,180,180));
+			pDC->Draw3dRect(barRect, RGB(170,170,170), RGB(170,170,170));
 
-			char buf[32];
-			sprintf(buf, "%d ms", avg);
+			// Draw text AFTER bar, right-aligned to fit remaining space
 			pDC->SetBkMode(TRANSPARENT);
-			CRect textRect(barLeft + barWidth + 4, rc.top, rc.right - 2, rc.bottom);
+			CFont* pOldFont = pDC->SelectObject(m_listMTR.GetFont());
+			CRect textRect(barLeft + barWidth + 3, rc.top, rc.right - 1, rc.bottom);
 			pDC->DrawText(buf, -1, textRect, DT_VCENTER | DT_LEFT | DT_SINGLELINE);
+			pDC->SelectObject(pOldFont);
 
 			*pResult = CDRF_SKIPDEFAULT;
 		}
