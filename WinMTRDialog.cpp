@@ -128,6 +128,7 @@ void WinMTRDialog::DoDataExchange(CDataExchange* pDX)
 //*****************************************************************************
 void WinMTRDialog::RefreshTabs()
 {
+	int curSel = m_tabCtrl.GetCurSel();
 	m_tabCtrl.DeleteAllItems();
 	for (size_t i = 0; i < sessions.size(); i++) {
 		CString label = sessions[i]->hostname;
@@ -135,6 +136,9 @@ void WinMTRDialog::RefreshTabs()
 		m_tabCtrl.InsertItem((int)i, label);
 	}
 	m_tabCtrl.InsertItem((int)sessions.size(), _T("+"));
+	if (curSel >= 0 && curSel < m_tabCtrl.GetItemCount()) {
+		m_tabCtrl.SetCurSel(curSel);
+	}
 }
 
 //*****************************************************************************
@@ -1231,6 +1235,10 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
 			m_listMTR.DeleteAllItems();
 			m_summaryText.ShowWindow(SW_HIDE);
 			m_listMTR.ShowWindow(SW_SHOW);
+
+			// Update host text box to show this session's hostname
+			m_comboHost.SetWindowText(sessions[activeSession]->hostname);
+
 			if (sessions[activeSession]->tracing) {
 				// Running trace - show stop button, disable host input
 				m_buttonStart.SetWindowText("Stop");
@@ -1248,5 +1256,16 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
 	CDialog::OnTimer(nIDEvent);
 }
 
-void WinMTRDialog::OnClose() { Transit(EXIT); }
-void WinMTRDialog::OnBnClickedCancel() { Transit(EXIT); }
+void WinMTRDialog::OnClose()
+{
+	if (AfxMessageBox("Exit WinMTR? Any running traces will be stopped.", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+		Transit(EXIT);
+	}
+}
+
+void WinMTRDialog::OnBnClickedCancel()
+{
+	if (AfxMessageBox("Exit WinMTR? Any running traces will be stopped.", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+		Transit(EXIT);
+	}
+}
