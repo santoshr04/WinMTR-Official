@@ -51,6 +51,7 @@ BEGIN_MESSAGE_MAP(WinMTRDialog, CDialog)
 	ON_WM_TIMER()
 	ON_WM_CLOSE()
 	ON_BN_CLICKED(IDCANCEL, &WinMTRDialog::OnBnClickedCancel)
+	ON_NOTIFY(NM_CUSTOMDRAW, IDC_LIST_MTR, OnCustomDrawList)
 END_MESSAGE_MAP()
 
 
@@ -154,22 +155,44 @@ BOOL WinMTRDialog::OnInitDialog()
 		statusBar.AddPaneControl(m_pWndButton, 1234, true);
 	}
 
+	// Create tab control
+	CRect rcTab;
+	m_listMTR.GetWindowRect(&rcTab);
+	ScreenToClient(&rcTab);
+	// Place tab above the list
+	CRect rcTabCtrl(rcTab.left, rcTab.top - 24, rcTab.left + 300, rcTab.top - 2);
+	m_tabCtrl.Create(WS_CHILD|WS_VISIBLE|TCS_TABS|TCS_SINGLELINE, rcTabCtrl, this, 2000);
+	m_tabCtrl.InsertItem(0, _T("Table"));
+	m_tabCtrl.InsertItem(1, _T("Summary"));
+	
+	CFont* tabFont = new CFont();
+	tabFont->CreatePointFont(90, _T("Segoe UI"));
+	m_tabCtrl.SetFont(tabFont);
+
+	// Summary text control
+	CRect rcSummary(rcTab.left + 10, rcTab.top + 10, rcTab.right - 10, rcTab.bottom - 10);
+	m_summaryText.Create(_T(""), WS_CHILD|WS_VISIBLE|SS_LEFT, rcSummary, this, 2001);
+	m_summaryText.SetFont(tabFont);
+	m_summaryText.ShowWindow(SW_HIDE);
+
+	// Style the list control
+	m_listMTR.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+	CFont* listFont = new CFont();
+	listFont->CreatePointFont(85, _T("Segoe UI"));
+	m_listMTR.SetFont(listFont);
+
 	for(int i = 0; i< MTR_NR_COLS; i++)
 		m_listMTR.InsertColumn(i, MTR_COLS[i], LVCFMT_LEFT, MTR_COL_LENGTH[i] , -1);
    
 	m_comboHost.SetFocus();
 
-	// We need to resize the dialog to make room for control bars.
-	// First, figure out how big the control bars are.
+	// Adjust window for control bars
 	CRect rcClientStart;
 	CRect rcClientNow;
 	GetClientRect(rcClientStart);
 	RepositionBars(AFX_IDW_CONTROLBAR_FIRST, AFX_IDW_CONTROLBAR_LAST,
 				   0, reposQuery, rcClientNow);
 
-	// Now move all the controls so they are in the same relative
-	// position within the remaining client area as they would be
-	// with no control bars.
 	CPoint ptOffset(rcClientNow.left - rcClientStart.left,
 					rcClientNow.top - rcClientStart.top);
 
@@ -184,14 +207,12 @@ BOOL WinMTRDialog::OnInitDialog()
 		pwndChild = pwndChild->GetNextWindow();
 	}
 
-	// Adjust the dialog window dimensions
 	CRect rcWindow;
 	GetWindowRect(rcWindow);
 	rcWindow.right += rcClientStart.Width() - rcClientNow.Width();
 	rcWindow.bottom += rcClientStart.Height() - rcClientNow.Height();
 	MoveWindow(rcWindow, FALSE);
 
-	// And position the control bars
 	RepositionBars(AFX_IDW_CONTROLBAR_FIRST, AFX_IDW_CONTROLBAR_LAST, 0);
 
 	InitRegistry();
@@ -202,6 +223,101 @@ BOOL WinMTRDialog::OnInitDialog()
 	}
 
 	return FALSE;
+}
+
+// Color thresholds for latency
+#define LATENCY_GREEN  50
+#define LATENCY_YELLOW 150
+// >150 = red
+
+COLORREF GetLatencyColor(int ms) {
+	if (ms <= 0) return RGB(255, 255, 255);
+	if (ms <= LATENCY_GREEN) return RGB(220, 255, 220);  // light green
+	if (ms <= LATENCY_YELLOW) return RGB(255, 255, 200); // light yellow
+	return RGB(255, 200, 200); // light red
+}
+
+// Custom draw handler for color-coded cells and latency bars
+void WinMTRDialog::OnCustomDrawList(NMHDR* pNMHDR, LRESULT* pResult)
+{
+	NMLVCUSTOMDRAW* pLVCD = (NMLVCUSTOMDRAW*)pNMHDR;
+	*pResult = CDRF_DODEFAULT;
+
+	if (pLVCD->nmcd.dwDrawStage == CDDS_PREPAINT) {
+		*pResult = CDRF_NOTIFYITEMDRAW;
+	}
+	else if (pLVCD->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+		*pResult = CDRF_NOTIFYSUBITEMDRAW;
+	}
+	else if (pLVCD->nmcd.dwDrawStage == (CDDS_ITEMPREPAINT | CDDS_SUBITEM)) {
+		int nItem = (int)pLVCD->nmcd.dwItemSpec;
+		int nSubItem = pLVCD->iSubItem;
+
+		// Color-code Best(5), Avrg(6), Worst(7), Last(8) columns
+		if (nSubItem >= 5 && nSubItem <= 8) {
+			if (state == TRACING || state == STOPPING) {
+				int latency = 0;
+				switch (nSubItem) {
+					case 5: latency = wmtrnet->GetBest(nItem); break;
+					case 6: latency = wmtrnet->GetAvg(nItem); break;
+					case 7: latency = wmtrnet->GetWorst(nItem); break;
+					case 8: latency = wmtrnet->GetLast(nItem); break;
+				}
+				pLVCD->clrTextBk = GetLatencyColor(latency);
+				*pResult = CDRF_NEWFONT;
+			}
+		}
+
+		// Custom draw latency bar column (9)
+		if (nSubItem == 9) {
+			CDC* pDC = CDC::FromHandle(pLVCD->nmcd.hdc);
+			CRect rc;
+			m_listMTR.GetSubItemRect(nItem, nSubItem, LVIR_BOUNDS, rc);
+			
+			// Get the avg latency for this hop and the max across all hops
+			int avg = wmtrnet->GetAvg(nItem);
+			int maxLatency = 1;
+			int nh = wmtrnet->GetMax();
+			for (int j = 0; j < nh; j++) {
+				int a = wmtrnet->GetAvg(j);
+				if (a > maxLatency) maxLatency = a;
+			}
+			if (maxLatency < 1) maxLatency = 1;
+
+			// Draw background
+			pDC->FillSolidRect(rc, RGB(245, 245, 245));
+
+			// Draw latency bar
+			int barHeight = rc.Height() - 6;
+			int barTop = rc.top + 3;
+			int barLeft = rc.left + 4;
+			int barMaxWidth = rc.Width() - 12;
+			int barWidth = (avg * barMaxWidth) / maxLatency;
+			if (barWidth < 2 && avg > 0) barWidth = 2;
+
+			CRect barRect(barLeft, barTop, barLeft + barWidth, barTop + barHeight);
+			COLORREF barColor = GetLatencyColor(avg);
+			// Darken for the bar
+			int r = min(255, GetRValue(barColor) + 0);
+			int g = min(255, GetGValue(barColor) - 50);
+			int b = min(255, GetBValue(barColor) - 50);
+			if (g < 0) g = 0;
+			if (b < 0) b = 0;
+			pDC->FillSolidRect(barRect, RGB(r, g, b));
+
+			// Draw border
+			pDC->Draw3dRect(barRect, RGB(180,180,180), RGB(180,180,180));
+
+			// Draw text (avg ms)
+			char buf[32];
+			sprintf(buf, "%d ms", avg);
+			pDC->SetBkMode(TRANSPARENT);
+			CRect textRect(barLeft + barWidth + 4, rc.top, rc.right - 2, rc.bottom);
+			pDC->DrawText(buf, -1, textRect, DT_VCENTER | DT_LEFT | DT_SINGLELINE);
+
+			*pResult = CDRF_SKIPDEFAULT;
+		}
+	}
 }
 
 //*****************************************************************************
@@ -377,6 +493,12 @@ void WinMTRDialog::OnSize(UINT nType, int cx, int cy)
 		m_buttonExpT.SetWindowPos(NULL, r.Width() - lb.Width()- 103, lb.TopLeft().y, lb.Width(), lb.Height() , SWP_NOSIZE | SWP_NOZORDER);
 	}
 
+	if (::IsWindow(m_tabCtrl.m_hWnd)) {
+		m_tabCtrl.GetWindowRect(&lb);
+		ScreenToClient(&lb);
+		m_tabCtrl.SetWindowPos(NULL, lb.TopLeft().x, lb.TopLeft().y, lb.Width(), lb.Height(), SWP_NOSIZE | SWP_NOZORDER);
+	}
+
 	if (::IsWindow(m_listMTR.m_hWnd)) {
 		m_listMTR.GetWindowRect(&lb);
 		ScreenToClient(&lb);
@@ -531,8 +653,6 @@ void WinMTRDialog::SetUseDNS(BOOL udns)
 }
 
 
-
-
 //*****************************************************************************
 // WinMTRDialog::OnRestart
 //
@@ -551,7 +671,6 @@ void WinMTRDialog::OnRestart()
 	if(state == IDLE) {
 		m_comboHost.GetWindowText(sHost);
 		sHost.TrimLeft();
-		sHost.TrimLeft();
       
 		if(sHost.IsEmpty()) {
 			AfxMessageBox("No host specified!");
@@ -559,6 +678,8 @@ void WinMTRDialog::OnRestart()
 			return ;
 		}
 		m_listMTR.DeleteAllItems();
+		m_summaryText.ShowWindow(SW_HIDE);
+		m_listMTR.ShowWindow(SW_SHOW);
 	}
 
 	if(state == IDLE) {
@@ -671,7 +792,7 @@ void WinMTRDialog::OnCTTC()
 
 	for(int i=0;i <nh ; i++) {
 		wmtrnet->GetName(i, buf);
-		if(strcmp(buf,"")==0) strcpy(buf,"No response from host");
+		if( strcmp(buf,"")==0 ) strcpy(buf,"No response from host");
 		
 		sprintf(t_buf, "|%40s - %4d | %4d | %4d | %4d | %4d | %4d | %4d |\r\n" , 
 					buf, wmtrnet->GetPercent(i),
@@ -873,7 +994,7 @@ void WinMTRDialog::OnEXPH()
 
 
 //*****************************************************************************
-// WinMTRDialog::WinMTRDialog
+// WinMTRDialog::OnCancel
 //
 // 
 //*****************************************************************************
@@ -927,8 +1048,78 @@ int WinMTRDialog::DisplayRedraw()
 		sprintf(buf, "%d", wmtrnet->GetLast(i));
 		m_listMTR.SetItem(i, 8, LVIF_TEXT, buf, 0, 0, 0, 0);
 
-   
+		// Latency bar column (9) - just a placeholder, actual bar drawn in custom draw
+		sprintf(buf, "%d ms", wmtrnet->GetAvg(i));
+		m_listMTR.SetItem(i, 9, LVIF_TEXT, buf, 0, 0, 0, 0);
+
+		// IP Info column (10)
+		wmtrnet->GetIpInfo(i, buf);
+		if(strlen(buf) == 0) strcpy(buf, "...");
+		m_listMTR.SetItem(i, 10, LVIF_TEXT, buf, 0, 0, 0, 0);
+
+    
 	}
+
+	// Update summary view if visible
+	if (m_summaryText.IsWindowVisible()) {
+		DisplaySummary();
+	}
+
+	return 0;
+}
+
+
+//*****************************************************************************
+// WinMTRDialog::DisplaySummary
+//
+//*****************************************************************************
+int WinMTRDialog::DisplaySummary()
+{
+	int nh = wmtrnet->GetMax();
+	if (nh == 0) return 0;
+
+	int totalSent = 0, totalRecv = 0, totalLoss = 0;
+	int bestOverall = 999999, worstOverall = 0, totalAvg = 0;
+	int activeHops = 0;
+
+	for (int i = 0; i < nh; i++) {
+		int sent = wmtrnet->GetXmit(i);
+		int recv = wmtrnet->GetReturned(i);
+		int avg = wmtrnet->GetAvg(i);
+		int best = wmtrnet->GetBest(i);
+		int worst = wmtrnet->GetWorst(i);
+
+		totalSent += sent;
+		totalRecv += recv;
+
+		if (sent > 0) {
+			activeHops++;
+			totalAvg += avg;
+			totalLoss += wmtrnet->GetPercent(i);
+			if (best > 0 && best < bestOverall) bestOverall = best;
+			if (worst > worstOverall) worstOverall = worst;
+		}
+	}
+
+	int avgLoss = activeHops > 0 ? totalLoss / activeHops : 0;
+	int avgLatency = activeHops > 0 ? totalAvg / activeHops : 0;
+
+	char summaryBuf[2048];
+	sprintf(summaryBuf,
+		"Summary\r\n"
+		"========\r\n\r\n"
+		"Total Hops: %d\r\n"
+		"Active Hops: %d\r\n\r\n"
+		"Total Sent: %d   Total Recv: %d\r\n"
+		"Avg Packet Loss: %d%%\r\n\r\n"
+		"Best Latency: %d ms\r\n"
+		"Average Latency: %d ms\r\n"
+		"Worst Latency: %d ms\r\n",
+		nh, activeHops, totalSent, totalRecv, avgLoss,
+		bestOverall < 999999 ? bestOverall : 0,
+		avgLatency, worstOverall);
+
+	m_summaryText.SetWindowText(summaryBuf);
 
 	return 0;
 }
@@ -1142,6 +1333,7 @@ void WinMTRDialog::Transit(STATES new_state)
 			m_buttonStart.SetWindowText("Stop");
 			m_comboHost.EnableWindow(FALSE);
 			m_buttonOptions.EnableWindow(FALSE);
+			m_tabCtrl.EnableWindow(FALSE);
 			statusBar.SetPaneText(0, "Double click on host name for more information.");
 			_beginthread(PingThread, 0 , this);
 			m_buttonStart.EnableWindow(TRUE);
@@ -1155,6 +1347,7 @@ void WinMTRDialog::Transit(STATES new_state)
 			m_buttonStart.SetWindowText("Start");
 			m_comboHost.EnableWindow(TRUE);
 			m_buttonOptions.EnableWindow(TRUE);
+			m_tabCtrl.EnableWindow(TRUE);
 			m_comboHost.SetFocus();
 		break;
 		case STOPPING_TO_STOPPING:
@@ -1167,6 +1360,7 @@ void WinMTRDialog::Transit(STATES new_state)
 			m_buttonStart.EnableWindow(FALSE);
 			m_comboHost.EnableWindow(FALSE);
 			m_buttonOptions.EnableWindow(FALSE);
+			m_tabCtrl.EnableWindow(FALSE);
 			wmtrnet->StopTrace();
 			statusBar.SetPaneText(0, "Waiting for last packets in order to stop trace ...");
 			DisplayRedraw();
@@ -1212,6 +1406,28 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
 		ReleaseMutex(traceThreadMutex);
 		if( state == TRACING) Transit(TRACING);
 		else if( state == STOPPING) Transit(STOPPING);
+	}
+
+	// Handle tab clicks
+	static int lastTabSelection = 0;
+	int curSel = m_tabCtrl.GetCurSel();
+	if (curSel != lastTabSelection && ::IsWindow(m_tabCtrl.m_hWnd)) {
+		lastTabSelection = curSel;
+		if (curSel == 0) {
+			// Table view
+			m_listMTR.ShowWindow(SW_SHOW);
+			m_summaryText.ShowWindow(SW_HIDE);
+		} else if (curSel == 1) {
+			// Summary view
+			m_listMTR.ShowWindow(SW_HIDE);
+			DisplaySummary();
+			m_summaryText.ShowWindow(SW_SHOW);
+			// Resize summary to fill list area
+			CRect rc;
+			m_listMTR.GetWindowRect(&rc);
+			ScreenToClient(&rc);
+			m_summaryText.SetWindowPos(NULL, rc.left, rc.top, rc.Width(), rc.Height(), SWP_NOZORDER);
+		}
 	}
 
 	CDialog::OnTimer(nIDEvent);

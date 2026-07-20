@@ -35,6 +35,7 @@ struct s_nethost {
   int best;				// best time
   int worst;			// worst time
   char name[255];
+  char ipinfo[255];	// IP geolocation / ISP info
 };
 
 //*****************************************************************************
@@ -58,6 +59,7 @@ public:
 
 	int		GetAddr(int at);
 	int		GetName(int at, char *n);
+	int		GetIpInfo(int at, char *n);
 	int		GetBest(int at);
 	int		GetWorst(int at);
 	int		GetAvg(int at);
@@ -69,6 +71,7 @@ public:
 
 	void	SetAddr(int at, __int32 addr);
 	void	SetName(int at, char *n);
+	void	SetIpInfo(int at, const char *n);
 	void	SetBest(int at, int current);
 	void	SetWorst(int at, int current);
 	void	SetLast(int at, int last);

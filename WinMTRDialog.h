@@ -66,8 +66,12 @@ public:
 
 	CButton	m_buttonExpT;
 	CButton	m_buttonExpH;
+
+	CTabCtrl m_tabCtrl;
+	CStatic m_summaryText;
 	
 	int InitMTRNet();
+	int DisplaySummary();
 
 	int DisplayRedraw();
 	void Transit(STATES new_state);
@@ -115,6 +119,7 @@ protected:
 	afx_msg void OnEXPH();
 
 	afx_msg void OnDblclkList(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnCustomDrawList(NMHDR* pNMHDR, LRESULT* pResult);
 	
 	DECLARE_MESSAGE_MAP()
 public:

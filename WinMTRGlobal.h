@@ -83,9 +83,9 @@
 #define IP_HEADER_LENGTH   20
 
 
-#define MTR_NR_COLS 9
+#define MTR_NR_COLS 11
 
-const char MTR_COLS[ MTR_NR_COLS ][10] = {
+const char MTR_COLS[ MTR_NR_COLS ][15] = {
 		"Hostname",
 		"Nr",
 		"Loss %",
@@ -94,11 +94,13 @@ const char MTR_COLS[ MTR_NR_COLS ][10] = {
 		"Best",
 		"Avrg",
 		"Worst",
-		"Last"
+		"Last",
+		"Latency",
+		"IP Info"
 };
 
 const int MTR_COL_LENGTH[ MTR_NR_COLS ] = {
-		190, 30, 50, 40, 40, 50, 50, 50, 50
+		180, 30, 50, 40, 40, 50, 50, 50, 50, 120, 180
 };
 
 int gettimeofday(struct timeval* tv, struct timezone *tz);

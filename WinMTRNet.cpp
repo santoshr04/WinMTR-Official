@@ -7,6 +7,8 @@
 #include "WinMTRDialog.h"
 #include <iostream>
 #include <sstream>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 
 #define TRACE_MSG(msg)										\
 	{														\
@@ -29,8 +31,14 @@ struct dns_resolver_thread {
 	WinMTRNet	*winmtr;
 };
 
+struct ipinfo_resolver_thread {
+	int			index;
+	WinMTRNet	*winmtr;
+};
+
 void TraceThread(void *p);
 void DnsResolverThread(void *p);
+void IpInfoResolverThread(void *p);
 
 WinMTRNet::WinMTRNet(WinMTRDialog *wp) {
 	
@@ -105,6 +113,7 @@ void WinMTRNet::ResetHops()
 		host[i].best = 0;
 		host[i].worst = 0;
 		memset(host[i].name,0,sizeof(host[i].name));
+		memset(host[i].ipinfo,0,sizeof(host[i].ipinfo));
 	}
 }
 
@@ -267,6 +276,14 @@ int WinMTRNet::GetAddr(int at)
 	return addr;
 }
 
+int WinMTRNet::GetIpInfo(int at, char *n)
+{
+	WaitForSingleObject(ghMutex, INFINITE);
+	strcpy(n, host[at].ipinfo);
+	ReleaseMutex(ghMutex);
+	return 0;
+}
+
 int WinMTRNet::GetName(int at, char *n)
 {
 	WaitForSingleObject(ghMutex, INFINITE);
@@ -375,6 +392,12 @@ void WinMTRNet::SetAddr(int at, __int32 addr)
 		dnt->index = at;
 		dnt->winmtr = this;
 		if(wmtrdlg->useDNS) _beginthread(DnsResolverThread, 0, dnt);
+
+		// Also start IP info lookup
+		ipinfo_resolver_thread *ipt = new ipinfo_resolver_thread;
+		ipt->index = at;
+		ipt->winmtr = this;
+		_beginthread(IpInfoResolverThread, 0, ipt);
 	}
 
 	ReleaseMutex(ghMutex);
@@ -384,6 +407,14 @@ void WinMTRNet::SetName(int at, char *n)
 {
 	WaitForSingleObject(ghMutex, INFINITE);
 	strcpy(host[at].name, n);
+	ReleaseMutex(ghMutex);
+}
+
+void WinMTRNet::SetIpInfo(int at, const char *n)
+{
+	WaitForSingleObject(ghMutex, INFINITE);
+	strncpy(host[at].ipinfo, n, sizeof(host[at].ipinfo) - 1);
+	host[at].ipinfo[sizeof(host[at].ipinfo) - 1] = '\0';
 	ReleaseMutex(ghMutex);
 }
 
@@ -451,5 +482,140 @@ void DnsResolverThread(void *p)
 	
 	delete p;
 	TRACE_MSG("DNS resolver thread stopped.");
+	_endthread();
+}
+
+//*****************************************************************************
+// IpInfoResolverThread - Looks up ISP/Org info for an IP via ip-api.com
+//
+//*****************************************************************************
+void IpInfoResolverThread(void *p)
+{
+	TRACE_MSG("IP Info resolver thread started.");
+	ipinfo_resolver_thread *ipt = (ipinfo_resolver_thread*)p;
+	WinMTRNet* wn = ipt->winmtr;
+
+	char ip_str[100];
+	int addr = wn->GetAddr(ipt->index);
+	if(addr == 0) {
+		delete p;
+		_endthread();
+		return;
+	}
+	sprintf(ip_str, "%d.%d.%d.%d", (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff);
+	TRACE_MSG("IP Info looking up: " << ip_str);
+
+	// Build URL for ip-api.com
+	char url[512];
+	sprintf(url, "http://ip-api.com/json/%s", ip_str);
+
+	// Parse URL for WinHTTP
+	char hostname[256] = "ip-api.com";
+	char path[512];
+	sprintf(path, "/json/%s", ip_str);
+
+	HINTERNET hSession = NULL;
+	HINTERNET hConnect = NULL;
+	HINTERNET hRequest = NULL;
+	char result[1024] = "";
+	DWORD dwSize = 0;
+	DWORD dwDownloaded = 0;
+	BOOL bResults = FALSE;
+
+	hSession = WinHttpOpen(L"WinMTR/0.9", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (hSession) {
+		wchar_t whostname[256];
+		mbstowcs(whostname, hostname, 256);
+		hConnect = WinHttpConnect(hSession, whostname, INTERNET_DEFAULT_HTTP_PORT, 0);
+	}
+
+	if (hConnect) {
+		wchar_t wpath[512];
+		mbstowcs(wpath, path, 512);
+		hRequest = WinHttpOpenRequest(hConnect, L"GET", wpath, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+	}
+
+	if (hRequest) {
+		bResults = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	}
+
+	if (bResults) {
+		bResults = WinHttpReceiveResponse(hRequest, NULL);
+	}
+
+	if (bResults) {
+		// Read response data
+		dwSize = 0;
+		char chunk[256];
+		DWORD chunkRead = 0;
+		int totalRead = 0;
+		do {
+			if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
+			if (dwSize == 0) break;
+			if (dwSize > sizeof(chunk)-1) dwSize = sizeof(chunk)-1;
+			
+			if (WinHttpReadData(hRequest, (LPVOID)chunk, dwSize, &dwDownloaded)) {
+				if (dwDownloaded > 0 && totalRead + (int)dwDownloaded < (int)sizeof(result) - 1) {
+					memcpy(result + totalRead, chunk, dwDownloaded);
+					totalRead += dwDownloaded;
+					result[totalRead] = '\0';
+				}
+			}
+		} while (dwSize > 0);
+	}
+
+	// Parse JSON response for ISP/Org info
+	if (strlen(result) > 0) {
+		char ipinfo[255] = "";
+		char *isp = NULL, *org = NULL;
+
+		// Parse "isp":"..."
+		char *p = strstr(result, "\"isp\":\"");
+		if (p) {
+			p += 7;
+			char *end = strchr(p, '"');
+			if (end) {
+				*end = '\0';
+				isp = p;
+				*end = '"';
+			}
+		}
+
+		// Parse "org":"..."
+		p = strstr(result, "\"org\":\"");
+		if (p) {
+			p += 7;
+			char *end = strchr(p, '"');
+			if (end) {
+				*end = '\0';
+				org = p;
+				*end = '"';
+			}
+		}
+
+		if (isp && org) {
+			sprintf(ipinfo, "%s / %s", isp, org);
+		} else if (isp) {
+			strcpy(ipinfo, isp);
+		} else if (org) {
+			strcpy(ipinfo, org);
+		}
+
+		if (strlen(ipinfo) > 0) {
+			wn->SetIpInfo(ipt->index, ipinfo);
+			TRACE_MSG("IP Info for " << ip_str << ": " << ipinfo);
+		} else {
+			wn->SetIpInfo(ipt->index, ip_str);
+		}
+	} else {
+		wn->SetIpInfo(ipt->index, ip_str);
+	}
+
+	if (hRequest) WinHttpCloseHandle(hRequest);
+	if (hConnect) WinHttpCloseHandle(hConnect);
+	if (hSession) WinHttpCloseHandle(hSession);
+
+	delete p;
+	TRACE_MSG("IP Info resolver thread stopped.");
 	_endthread();
 }
