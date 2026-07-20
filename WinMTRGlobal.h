@@ -46,10 +46,10 @@
 
 #include "resource.h"
 
-#define WINMTR_VERSION	"0.9"
+#define WINMTR_VERSION	"1.0"
 #define WINMTR_LICENSE	"GPL - GNU Public License"
-#define WINMTR_COPYRIGHT "WinMTR 0.9 (c) 2010-2011 Appnor MSP - Fully Managed Hosting & Cloud Provider www.appnor.com"
-#define WINMTR_HOMEPAGE	"http://WinMTR.sourceforge.net"
+#define WINMTR_COPYRIGHT "WinMTR 1.0"
+#define WINMTR_HOMEPAGE	"https://github.com/WinMTR/WinMTR-Official"
 
 #define DEFAULT_PING_SIZE	64
 #define DEFAULT_INTERVAL	1.0
