@@ -59,6 +59,11 @@ BEGIN_MESSAGE_MAP(WinMTRDialog, CDialog)
 	ON_WM_CLOSE()
 	ON_BN_CLICKED(IDCANCEL, &WinMTRDialog::OnBnClickedCancel)
 	ON_NOTIFY(NM_CUSTOMDRAW, IDC_LIST_MTR, OnCustomDrawList)
+	ON_BN_CLICKED(IDC_BTN_5MIN, &WinMTRDialog::OnBtn5min)
+	ON_BN_CLICKED(IDC_BTN_15MIN, &WinMTRDialog::OnBtn15min)
+	ON_BN_CLICKED(IDC_BTN_1HR, &WinMTRDialog::OnBtn1hr)
+	ON_BN_CLICKED(IDC_BTN_12HR, &WinMTRDialog::OnBtn12hr)
+	ON_BN_CLICKED(IDC_BTN_24HR, &WinMTRDialog::OnBtn24hr)
 END_MESSAGE_MAP()
 
 
@@ -87,6 +92,8 @@ WinMTRDialog::WinMTRDialog(CWnd* pParent)
 	hasUseDNSFromCmdLine = false;
 
 	traceThreadMutex = CreateMutex(NULL, FALSE, NULL);
+	graphRange = 300; // default 5 min
+	showGraph = true;
 }
 
 WinMTRDialog::~WinMTRDialog()
@@ -542,6 +549,14 @@ void WinMTRDialog::OnPaint()
 		dc.DrawIcon((rect.Width() - cxIcon + 1) / 2, (rect.Height() - cyIcon + 1) / 2, m_hIcon);
 	} else {
 		CDialog::OnPaint();
+	}
+	// Draw graph overlay
+	CWnd* pGraph = GetDlgItem(IDC_GRAPH_AREA);
+	if (pGraph && pGraph->IsWindowVisible()) {
+		CClientDC dc(pGraph);
+		CRect rc;
+		pGraph->GetClientRect(&rc);
+		DrawGraph(&dc, rc);
 	}
 }
 
@@ -1150,7 +1165,14 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
 
 	if (state == TRACING && allIdle) {
 		Transit(IDLE);
-	} else if (call_count % 3 == 0) {
+	}
+	
+	// Record history every second
+	if (call_count % 10 == 0) {
+		RecordHistory();
+	}
+
+	if (call_count % 3 == 0) {
 		// Refresh the display for the active session every 300ms
 		if (activeSession >= 0 && activeSession < (int)sessions.size() && sessions[activeSession]->tracing) {
 			if (!sessions[activeSession]->wmtrnet) return;
@@ -1254,6 +1276,185 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
 	}
 
 	CDialog::OnTimer(nIDEvent);
+}
+
+void WinMTRDialog::OnBtn5min() { graphRange = 300; InvalidateRect(NULL, TRUE); }
+void WinMTRDialog::OnBtn15min() { graphRange = 900; InvalidateRect(NULL, TRUE); }
+void WinMTRDialog::OnBtn1hr() { graphRange = 3600; InvalidateRect(NULL, TRUE); }
+void WinMTRDialog::OnBtn12hr() { graphRange = 43200; InvalidateRect(NULL, TRUE); }
+void WinMTRDialog::OnBtn24hr() { graphRange = 86400; InvalidateRect(NULL, TRUE); }
+
+
+void WinMTRDialog::RecordHistory()
+{
+	if (activeSession < 0 || activeSession >= (int)sessions.size()) return;
+	TraceSession* sess = sessions[activeSession];
+	if (!sess->tracing || !sess->wmtrnet) return;
+
+	// Get overall average latency and total loss
+	int nh = sess->wmtrnet->GetMax();
+	if (nh == 0) return;
+	int totalAvg = 0, totalLoss = 0, activeHops = 0;
+	for (int i = 0; i < nh; i++) {
+		if (sess->wmtrnet->GetXmit(i) > 0) {
+			activeHops++;
+			totalAvg += sess->wmtrnet->GetAvg(i);
+			totalLoss += sess->wmtrnet->GetPercent(i);
+		}
+	}
+	if (activeHops == 0) return;
+
+	int avgLatency = totalAvg / activeHops;
+	int avgLoss = totalLoss / activeHops;
+
+	if (!sess->history) {
+		sess->history = new HistorySample[MAX_HISTORY_SAMPLES];
+		memset(sess->history, 0, sizeof(HistorySample) * MAX_HISTORY_SAMPLES);
+		sess->historyPos = 0;
+		sess->historyCount = 0;
+		sess->traceStartTime = time(NULL);
+	}
+
+	// Store sample (circular buffer)
+	HistorySample* sample = &sess->history[sess->historyPos];
+	sample->timestamp = time(NULL);
+	sample->avgLatency = avgLatency;
+	sample->packetLoss = avgLoss;
+
+	sess->historyPos = (sess->historyPos + 1) % MAX_HISTORY_SAMPLES;
+	if (sess->historyCount < MAX_HISTORY_SAMPLES) sess->historyCount++;
+}
+
+void WinMTRDialog::DrawGraph(CDC* pDC, CRect& rc)
+{
+	if (activeSession < 0 || activeSession >= (int)sessions.size()) return;
+	TraceSession* sess = sessions[activeSession];
+	if (!sess->history || sess->historyCount < 2) {
+		pDC->FillSolidRect(rc, RGB(25, 25, 35));
+		pDC->SetTextColor(RGB(150, 150, 160));
+		pDC->SetBkMode(TRANSPARENT);
+		CFont* f = m_btn5min.GetFont();
+		CFont* old = pDC->SelectObject(f);
+		pDC->DrawText(_T("Graph will appear after collecting data..."), -1, rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		pDC->SelectObject(old);
+		return;
+	}
+
+	// Dark theme background
+	pDC->FillSolidRect(rc, RGB(25, 25, 35));
+	CRect inner = rc;
+	inner.DeflateRect(50, 15, 15, 30);
+
+	time_t now = time(NULL);
+	time_t rangeStart = now - graphRange;
+
+	// Find first visible sample index
+	int firstIdx = -1, lastIdx = 0;
+	int maxLatency = 0, maxLoss = 0;
+	for (int i = 0; i < sess->historyCount; i++) {
+		int idx = (sess->historyPos - sess->historyCount + i + MAX_HISTORY_SAMPLES) % MAX_HISTORY_SAMPLES;
+		if (sess->history[idx].timestamp >= rangeStart) {
+			if (firstIdx < 0) firstIdx = idx;
+			lastIdx = idx;
+			if (sess->history[idx].avgLatency > maxLatency)
+				maxLatency = sess->history[idx].avgLatency;
+			if (sess->history[idx].packetLoss > maxLoss)
+				maxLoss = sess->history[idx].packetLoss;
+		}
+	}
+	if (firstIdx < 0) {
+		pDC->SetTextColor(RGB(150, 150, 160));
+		pDC->DrawText(_T("No data in selected range"), -1, inner, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		return;
+	}
+	if (maxLatency < 10) maxLatency = 10;
+	if (maxLoss < 5) maxLoss = 5;
+
+	// Draw grid lines
+	CPen gridPen(PS_SOLID, 1, RGB(50, 50, 60));
+	CPen* oldPen = pDC->SelectObject(&gridPen);
+	for (int i = 0; i <= 4; i++) {
+		int y = inner.top + (inner.Height() * i / 4);
+		pDC->MoveTo(inner.left, y);
+		pDC->LineTo(inner.right, y);
+	}
+
+	// Label axes
+	CFont* graphFont = new CFont();
+	graphFont->CreatePointFont(70, _T("Segoe UI"));
+	CFont* oldFont = pDC->SelectObject(graphFont);
+	pDC->SetTextColor(RGB(150, 150, 160));
+	pDC->SetBkMode(TRANSPARENT);
+
+	char buf[64];
+	sprintf(buf, "%d ms", maxLatency);
+	pDC->DrawText(buf, -1, CRect(rc.left + 2, inner.top - 8, rc.left + 48, inner.top + 8), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+	sprintf(buf, "0 ms");
+	pDC->DrawText(buf, -1, CRect(rc.left + 2, inner.bottom - 8, rc.left + 48, inner.bottom + 8), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+	sprintf(buf, "%d%%", maxLoss);
+	pDC->DrawText(buf, -1, CRect(rc.right - 45, inner.top - 8, rc.right - 2, inner.top + 8), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+	pDC->DrawText("0%", -1, CRect(rc.right - 45, inner.bottom - 8, rc.right - 2, inner.bottom + 8), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+	// Time labels
+	char timeLabel[32];
+	struct tm* tmStart = localtime(&rangeStart);
+	strftime(timeLabel, 32, "%H:%M", tmStart);
+	pDC->DrawText(timeLabel, -1, CRect(inner.left - 20, inner.bottom + 2, inner.left + 50, inner.bottom + 28), DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
+	strftime(timeLabel, 32, "%H:%M", localtime(&now));
+	pDC->DrawText(timeLabel, -1, CRect(inner.right - 50, inner.bottom + 2, inner.right + 5, inner.bottom + 28), DT_RIGHT | DT_BOTTOM | DT_SINGLELINE);
+
+	// Draw axis labels
+	pDC->SetTextColor(RGB(100, 255, 100));
+	pDC->DrawText("Latency", -1, CRect(inner.left, inner.top - 22, inner.left + 100, inner.top - 4), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+	pDC->SetTextColor(RGB(255, 100, 100));
+	pDC->DrawText("Loss %", -1, CRect(inner.right - 80, inner.top - 22, inner.right - 2, inner.top - 4), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+	pDC->SelectObject(oldFont);
+	delete graphFont;
+
+	// Draw latency line
+	CPen latencyPen(PS_SOLID, 2, RGB(100, 255, 100));
+	pDC->SelectObject(&latencyPen);
+	bool first = true;
+	for (int i = 0; i < sess->historyCount; i++) {
+		int idx = (sess->historyPos - sess->historyCount + i + MAX_HISTORY_SAMPLES) % MAX_HISTORY_SAMPLES;
+		if (sess->history[idx].timestamp < rangeStart) continue;
+		
+		int x = inner.left + (int)((sess->history[idx].timestamp - rangeStart) * inner.Width() / graphRange);
+		int y = inner.bottom - (int)(sess->history[idx].avgLatency * inner.Height() / maxLatency);
+		if (x > inner.right) break;
+
+		if (first) { pDC->MoveTo(x, y); first = false; }
+		else pDC->LineTo(x, y);
+	}
+
+	// Draw loss line
+	CPen lossPen(PS_SOLID, 2, RGB(255, 100, 100));
+	pDC->SelectObject(&lossPen);
+	first = true;
+	for (int i = 0; i < sess->historyCount; i++) {
+		int idx = (sess->historyPos - sess->historyCount + i + MAX_HISTORY_SAMPLES) % MAX_HISTORY_SAMPLES;
+		if (sess->history[idx].timestamp < rangeStart) continue;
+		
+		int x = inner.left + (int)((sess->history[idx].timestamp - rangeStart) * inner.Width() / graphRange);
+		int y = inner.bottom - (int)(sess->history[idx].packetLoss * inner.Height() / maxLoss);
+		if (x > inner.right) break;
+
+		if (first) { pDC->MoveTo(x, y); first = false; }
+		else pDC->LineTo(x, y);
+	}
+
+	pDC->SelectObject(oldPen);
+
+	// Draw border
+	CPen borderPen(PS_SOLID, 1, RGB(60, 60, 70));
+	pDC->SelectObject(&borderPen);
+	pDC->MoveTo(inner.left, inner.top);
+	pDC->LineTo(inner.right, inner.top);
+	pDC->LineTo(inner.right, inner.bottom);
+	pDC->LineTo(inner.left, inner.bottom);
+	pDC->LineTo(inner.left, inner.top);
+	pDC->SelectObject(oldPen);
 }
 
 void WinMTRDialog::OnClose()

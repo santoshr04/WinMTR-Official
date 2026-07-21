@@ -20,12 +20,24 @@
 #include "WinMTRStatusBar.h"
 #include "WinMTRNet.h"
 
+#define MAX_HISTORY_SAMPLES 7200
+
+struct HistorySample {
+	time_t timestamp;
+	int avgLatency;
+	int packetLoss;
+};
+
 struct TraceSession {
 	CString hostname;
 	WinMTRNet* wmtrnet;
 	bool tracing;
 	HANDLE traceMutex;
 	int tabIndex;
+	HistorySample* history;
+	int historyPos;
+	int historyCount;
+	time_t traceStartTime;
 };
 
 //*****************************************************************************
@@ -80,6 +92,11 @@ public:
 
 	CTabCtrl m_tabCtrl;
 	CStatic m_summaryText;
+	CStatic m_graphFrame;
+	CButton m_btn5min, m_btn15min, m_btn1hr, m_btn12hr, m_btn24hr;
+	
+	int graphRange; // seconds to display
+	bool showGraph;
 
 	std::vector<TraceSession*> sessions;
 	int activeSession;
@@ -145,8 +162,15 @@ private:
 	void StartTraceForSession(int idx, const char* hostname);
 	void CloseSession(int idx);
 	void EnableIdleControls();
+	void RecordHistory();
+	void DrawGraph(CDC* pDC, CRect& rc);
 public:
 	afx_msg void OnCbnCloseupComboHost();
+	afx_msg void OnBtn5min();
+	afx_msg void OnBtn15min();
+	afx_msg void OnBtn1hr();
+	afx_msg void OnBtn12hr();
+	afx_msg void OnBtn24hr();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnClose();
 	afx_msg void OnBnClickedCancel();

@@ -40,6 +40,12 @@
 #define IDC_COMBO_HOST                  1024
 #define IDC_EDIT_MAX_LRU                1025
 #define IDC_MFCLINK1                    1026
+#define IDC_GRAPH_AREA                  1027
+#define IDC_BTN_5MIN                    1028
+#define IDC_BTN_15MIN                   1029
+#define IDC_BTN_1HR                     1030
+#define IDC_BTN_12HR                    1031
+#define IDC_BTN_24HR                    1032
 
 // Next default values for new objects
 // 
