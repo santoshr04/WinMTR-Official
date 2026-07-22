@@ -730,19 +730,26 @@ void WinMTRDialog::OnCTTC()
 {	
 	if (activeSession < 0 || activeSession >= (int)sessions.size() || !sessions[activeSession]->wmtrnet) return;
 	WinMTRNet* wn = sessions[activeSession]->wmtrnet;
-	char buf[255], t_buf[1000], f_buf[255*100];
+	char buf[255], t_buf[1000], f_buf[255*1000];
+	char ipinfo[255];
 	int nh = wn->GetMax();
-	strcpy(f_buf, "|------------------------------------------------------------------------------------------|\r\n");
-	sprintf(t_buf, "|                                      WinMTR statistics                                   |\r\n"); strcat(f_buf, t_buf);
-	sprintf(t_buf, "|                       Host              -   %%  | Sent | Recv | Best | Avrg | Wrst | Last |\r\n" ); strcat(f_buf, t_buf);
-	sprintf(t_buf, "|------------------------------------------------|------|------|------|------|------|------|\r\n" ); strcat(f_buf, t_buf);
+	strcpy(f_buf, "|--------------------------------------------------------------------------------------------------------------------|\r\n");
+	sprintf(t_buf, "|                                             WinMTR statistics                                                      |\r\n"); strcat(f_buf, t_buf);
+	sprintf(t_buf, "| Hostname                        | Nr | Loss%% | Sent | Recv | Best | Avrg | Wrst | Last | Latency | IP Info          |\r\n" ); strcat(f_buf, t_buf);
+	sprintf(t_buf, "|---------------------------------|----|-------|------|------|------|------|------|------|---------|------------------|\r\n" ); strcat(f_buf, t_buf);
 	for(int i=0;i<nh;i++) {
 		wn->GetName(i, buf);
 		if(strcmp(buf,"")==0) strcpy(buf,"No response from host");
-		sprintf(t_buf, "|%40s - %4d | %4d | %4d | %4d | %4d | %4d | %4d |\r\n", buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i), wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i));
+		wn->GetIpInfo(i, ipinfo);
+		if(strlen(ipinfo)==0) strcpy(ipinfo,"...");
+		sprintf(t_buf, "| %-31s | %2d | %4d%% | %4d | %4d | %4d | %4d | %4d | %4d | %4dms | %-16s |\r\n",
+			buf, i+1, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i),
+			wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i),
+			wn->GetAvg(i), ipinfo);
 		strcat(f_buf, t_buf);
 	}
-	sprintf(t_buf, "|________________________________________________|______|______|______|______|______|______|\r\n"); strcat(f_buf, t_buf);
+	sprintf(t_buf, "|--------------------------------------------------------------------------------------------------------------------|\r\n"); strcat(f_buf, t_buf);
+	sprintf(t_buf, "   WinMTR - Network Diagnostic Tool\r\n"); strcat(f_buf, t_buf);
 	CString source(f_buf);
 	OpenClipboard(); EmptyClipboard();
 	HGLOBAL clipbuffer = GlobalAlloc(GMEM_DDESHARE, source.GetLength()+1);
@@ -757,19 +764,31 @@ void WinMTRDialog::OnCHTC()
 {
 	if (activeSession < 0 || activeSession >= (int)sessions.size() || !sessions[activeSession]->wmtrnet) return;
 	WinMTRNet* wn = sessions[activeSession]->wmtrnet;
-	char buf[255], t_buf[1000], f_buf[255*100];
+	char buf[255], t_buf[2000], f_buf[255*1000];
+	char ipinfo[255];
 	int nh = wn->GetMax();
-	strcpy(f_buf, "<html><head><title>WinMTR Statistics</title></head><body bgcolor=\"white\">\r\n");
-	sprintf(t_buf, "<center><h2>WinMTR statistics</h2></center>\r\n"); strcat(f_buf, t_buf);
-	sprintf(t_buf, "<p align=\"center\"> <table border=\"1\" align=\"center\">\r\n"); strcat(f_buf, t_buf);
-	sprintf(t_buf, "<tr><td>Host</td> <td>%%</td> <td>Sent</td> <td>Recv</td> <td>Best</td> <td>Avrg</td> <td>Wrst</td> <td>Last</td></tr>\r\n"); strcat(f_buf, t_buf);
+	strcpy(f_buf, "<html><head><title>WinMTR Statistics</title>\r\n");
+	strcat(f_buf, "<style>body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:20px}");
+	strcat(f_buf, "table{border-collapse:collapse;width:100%%}th{background:#16213e;color:#4fd1c5;padding:8px 10px;text-align:left}");
+	strcat(f_buf, "td{padding:6px 10px;border-bottom:1px solid #333}");
+	strcat(f_buf, "tr:hover{background:#0f3460}.green{color:#4fd1c5}.red{color:#f87171}.yellow{color:#fbbf24}");
+	strcat(f_buf, "h2{color:#4fd1c5}</style></head><body>\r\n");
+	sprintf(t_buf, "<h2>WinMTR Statistics</h2>\r\n"); strcat(f_buf, t_buf);
+	sprintf(t_buf, "<p>Target: %s | Hops: %d</p>\r\n", (LPCSTR)sessions[activeSession]->hostname, nh); strcat(f_buf, t_buf);
+	sprintf(t_buf, "<table><tr><th>#</th><th>Hostname</th><th>Loss%%</th><th>Sent</th><th>Recv</th><th>Best</th><th>Avrg</th><th>Worst</th><th>Last</th><th>IP Info</th></tr>\r\n"); strcat(f_buf, t_buf);
 	for(int i=0;i<nh;i++) {
 		wn->GetName(i, buf);
 		if(strcmp(buf,"")==0) strcpy(buf,"No response from host");
-		sprintf(t_buf, "<tr><td>%s</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td></tr>\r\n", buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i), wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i));
+		wn->GetIpInfo(i, ipinfo);
+		if(strlen(ipinfo)==0) strcpy(ipinfo,"...");
+		int avg = wn->GetAvg(i);
+		const char* cl = avg < 50 ? "green" : (avg < 150 ? "yellow" : "red");
+		sprintf(t_buf, "<tr><td>%d</td><td>%s</td><td>%d%%</td><td>%d</td><td>%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td>%s</td></tr>\r\n",
+			i+1, buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i),
+			cl, wn->GetBest(i), cl, avg, cl, wn->GetWorst(i), cl, wn->GetLast(i), ipinfo);
 		strcat(f_buf, t_buf);
 	}
-	sprintf(t_buf, "</table></body></html>\r\n"); strcat(f_buf, t_buf);
+	sprintf(t_buf, "</table><p><small>Generated by WinMTR - Network Diagnostic Tool</small></p></body></html>\r\n"); strcat(f_buf, t_buf);
 	CString source(f_buf);
 	OpenClipboard(); EmptyClipboard();
 	HGLOBAL clipbuffer = GlobalAlloc(GMEM_DDESHARE, source.GetLength()+1);
@@ -787,18 +806,26 @@ void WinMTRDialog::OnEXPT()
 	if(dlg.DoModal() == IDOK) {
 		if (activeSession < 0 || activeSession >= (int)sessions.size() || !sessions[activeSession]->wmtrnet) return;
 		WinMTRNet* wn = sessions[activeSession]->wmtrnet;
-		char buf[255], t_buf[1000], f_buf[255*100];
+		char buf[255], t_buf[2000], f_buf[255*1000];
+		char ipinfo[255];
 		int nh = wn->GetMax();
-		strcpy(f_buf, "|------------------------------------------------------------------------------------------|\r\n");
-		sprintf(t_buf, "|                                      WinMTR statistics                                   |\r\n"); strcat(f_buf, t_buf);
-		sprintf(t_buf, "|                       Host              -   %%  | Sent | Recv | Best | Avrg | Wrst | Last |\r\n"); strcat(f_buf, t_buf);
-		sprintf(t_buf, "|------------------------------------------------|------|------|------|------|------|------|\r\n"); strcat(f_buf, t_buf);
+		strcpy(f_buf, "WinMTR Statistics\r\n");
+		sprintf(t_buf, "Target: %s\r\nHops: %d\r\n\r\n", (LPCSTR)sessions[activeSession]->hostname, nh); strcat(f_buf, t_buf);
+		sprintf(t_buf, "%-2s %-30s %6s %5s %5s %5s %5s %5s %5s %7s %s\r\n",
+			"#", "Hostname", "Loss%", "Sent", "Recv", "Best", "Avrg", "Wrst", "Last", "Latency", "IP Info");
+		strcat(f_buf, t_buf);
+		char sep[256]; sprintf(sep, "%.90s\r\n", "------------------------------------------------------------------------------------------");
+		strcat(f_buf, sep);
 		for(int i=0;i<nh;i++) {
 			wn->GetName(i, buf); if(strcmp(buf,"")==0) strcpy(buf,"No response from host");
-			sprintf(t_buf, "|%40s - %4d | %4d | %4d | %4d | %4d | %4d | %4d |\r\n", buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i), wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i));
+			wn->GetIpInfo(i, ipinfo); if(strlen(ipinfo)==0) strcpy(ipinfo,"...");
+			sprintf(t_buf, "%-2d %-30s %5d%% %4d %4d %4d %4d %4d %4d %4dms %s\r\n",
+				i+1, buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i),
+				wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i),
+				wn->GetAvg(i), ipinfo);
 			strcat(f_buf, t_buf);
 		}
-		sprintf(t_buf, "|________________________________________________|______|______|______|______|______|______|\r\n"); strcat(f_buf, t_buf);
+		sprintf(t_buf, "\r\nGenerated by WinMTR - Network Diagnostic Tool\r\n"); strcat(f_buf, t_buf);
 		FILE *fp = fopen(dlg.GetPathName(), "wt");
 		if(fp) { fprintf(fp, "%s", f_buf); fclose(fp); }
 	}
@@ -811,18 +838,31 @@ void WinMTRDialog::OnEXPH()
 	if(dlg.DoModal() == IDOK) {
 		if (activeSession < 0 || activeSession >= (int)sessions.size() || !sessions[activeSession]->wmtrnet) return;
 		WinMTRNet* wn = sessions[activeSession]->wmtrnet;
-		char buf[255], t_buf[1000], f_buf[255*100];
+		char buf[255], t_buf[2000], f_buf[255*1000];
+		char ipinfo[255];
 		int nh = wn->GetMax();
-		strcpy(f_buf, "<html><head><title>WinMTR Statistics</title></head><body bgcolor=\"white\">\r\n");
-		sprintf(t_buf, "<center><h2>WinMTR statistics</h2></center>\r\n"); strcat(f_buf, t_buf);
-		sprintf(t_buf, "<p align=\"center\"> <table border=\"1\" align=\"center\">\r\n"); strcat(f_buf, t_buf);
-		sprintf(t_buf, "<tr><td>Host</td> <td>%%</td> <td>Sent</td> <td>Recv</td> <td>Best</td> <td>Avrg</td> <td>Wrst</td> <td>Last</td></tr>\r\n"); strcat(f_buf, t_buf);
+		strcpy(f_buf, "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>WinMTR Statistics</title>\r\n");
+		strcat(f_buf, "<style>body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:30px}");
+		strcat(f_buf, "table{border-collapse:collapse;width:100%%;margin-top:15px}th{background:#16213e;color:#4fd1c5;padding:10px;text-align:left}");
+		strcat(f_buf, "td{padding:8px 10px;border-bottom:1px solid #333}");
+		strcat(f_buf, "tr:hover{background:#0f3460}.g{color:#4fd1c5}.r{color:#f87171}.y{color:#fbbf24}");
+		strcat(f_buf, "h1{color:#4fd1c5;margin-bottom:5px}p{margin:4px 0;color:#888}</style></head><body>\r\n");
+		sprintf(t_buf, "<h1>WinMTR Statistics</h1>\r\n"); strcat(f_buf, t_buf);
+		time_t now = time(NULL);
+		sprintf(t_buf, "<p>Target: <strong>%s</strong> | Hops: %d</p>\r\n",
+			(LPCSTR)sessions[activeSession]->hostname, nh); strcat(f_buf, t_buf);
+		sprintf(t_buf, "<table><tr><th>#</th><th>Hostname</th><th>Loss%%</th><th>Sent</th><th>Recv</th><th>Best</th><th>Avrg</th><th>Worst</th><th>Last</th><th>IP Info</th></tr>\r\n"); strcat(f_buf, t_buf);
 		for(int i=0;i<nh;i++) {
 			wn->GetName(i, buf); if(strcmp(buf,"")==0) strcpy(buf,"No response from host");
-			sprintf(t_buf, "<tr><td>%s</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td> <td>%4d</td></tr>\r\n", buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i), wn->GetBest(i), wn->GetAvg(i), wn->GetWorst(i), wn->GetLast(i));
+			wn->GetIpInfo(i, ipinfo); if(strlen(ipinfo)==0) strcpy(ipinfo,"...");
+			int avg = wn->GetAvg(i);
+			const char* cl = avg < 50 ? "g" : (avg < 150 ? "y" : "r");
+			sprintf(t_buf, "<tr><td>%d</td><td>%s</td><td>%d%%</td><td>%d</td><td>%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td class=\"%s\">%d</td><td>%s</td></tr>\r\n",
+				i+1, buf, wn->GetPercent(i), wn->GetXmit(i), wn->GetReturned(i),
+				cl, wn->GetBest(i), cl, avg, cl, wn->GetWorst(i), cl, wn->GetLast(i), ipinfo);
 			strcat(f_buf, t_buf);
 		}
-		sprintf(t_buf, "</table></body></html>\r\n"); strcat(f_buf, t_buf);
+		sprintf(t_buf, "</table><p style=\"margin-top:20px\">Generated by WinMTR - Network Diagnostic Tool</p></body></html>\r\n"); strcat(f_buf, t_buf);
 		FILE *fp = fopen(dlg.GetPathName(), "wt");
 		if(fp) { fprintf(fp, "%s", f_buf); fclose(fp); }
 	}
